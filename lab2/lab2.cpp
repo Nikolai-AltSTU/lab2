@@ -26,9 +26,9 @@ class Event
 public:
     Event(int id);
     int getId() { return id; }
-    ///int earlyMoment = 0;
-    ///int lateMoment = 0;
-    ///int reservedTime = 0;
+    int earlyMoment = INT32_MIN;
+    int lateMoment = INT32_MAX;
+    int reservedTime = 0;
     int newNumber = 0;
     int level = V_START;
     map<int, Task*> prevTasksOfEvent;
@@ -45,9 +45,11 @@ public:
     int nextEventIndex = V_FINISH;
     Event* prevEvent;
     Event* nextEvent;
-    int time = 0;
+    int timeOfDuration = 0;
+    int fullRezervedTime = 0;
+    int independentRezervedTime = 0;
     Task(int id);
-    Task(int id, int prevEventIndex, int nextEventIndex, int time);
+    Task(int id, int prevEventIndex, int nextEventIndex, int timeOfDuration);
     friend std::ostream& operator<< (std::ostream& out, const Task* task);
     friend std::istream& operator>> (std::istream& in, Task& task);
     ~Task();
@@ -79,6 +81,13 @@ ostream& operator<<(ostream& out, const Event *event) {
     {
         out << " ( фиктивное конечное) ";
     }
+    out << endl;
+    out << " ранний срок: " << event->earlyMoment << endl;
+    out << " поздний срок: " << event->lateMoment << endl;
+    out << " резерв времени: " << event->reservedTime << endl;
+    int lateMoment = INT32_MAX;
+    int reservedTime = 0;
+
     //out << endl;
     /*
     out << " \tПредыдущие работы: " << endl;
@@ -113,27 +122,29 @@ Task::Task(int id)
 {
     this->id = id;
 }
-Task::Task(int id, int prevEventIndex, int nextEventIndex, int time)
+Task::Task(int id, int prevEventIndex, int nextEventIndex, int timeOfDuration)
 {
     this->id = id;
     this->prevEventIndex = prevEventIndex;
     this->prevEvent = events[prevEventIndex];
     this->nextEventIndex = nextEventIndex;
     this->nextEvent = events[nextEventIndex];
-    this->time = time;
+    this->timeOfDuration = timeOfDuration;
 }
 ostream& operator<< (ostream& out, const Task* task) {
     out << "ID работы: " << task->id << "\t ";
     out << "Предыдущее событие: " << task->prevEventIndex << "\t ";
     out << "Следующее событие: " << task->nextEventIndex << "\t ";
-    out << "Время выполнения: " << task->time << "\t ";
+    out << "Время: " << task->timeOfDuration << "\t ";
+    out << "Полный резерв: " << task->fullRezervedTime << "\t ";
+    out << "Независимый резерв: " << task->independentRezervedTime << endl;
     return out;
 }
 istream& operator>> (std::istream& in, Task& task)
 {
     in >> task.prevEventIndex;
     in >> task.nextEventIndex;
-    in >> task.time;
+    in >> task.timeOfDuration;
     task.prevEvent = events[task.prevEventIndex];
     task.nextEvent = events[task.nextEventIndex];
     return in;
@@ -456,16 +467,75 @@ vector<vector<Event*>> findFullWay(vector<Event*> *sortedEvents, Event* start, E
     return waysFromEvent[start->getId()];
 }
 
-void print_info() {
-    cout << " \t Список работ " << endl;
-    for (auto t : tasks)
+map<int, vector<vector<Event*>>> criticalWaysFromEvent;
+vector<vector<Event*>> findCriticalWay(vector<Event*>* sortedEvents, Event* start, Event* finish)
+{
+    criticalWaysFromEvent[finish->getId()].push_back({ finish });
+
+    for (int i = sortedEvents->size() - 2; i >= 0; i--)
     {
-        cout << t.second << endl;
+        Event* pEvent = (*sortedEvents)[i];
+        for (auto nextTask : pEvent->nextTasksOfEvent)
+        {
+            if (nextTask.second->fullRezervedTime > 0)
+                continue;
+            for (auto way : criticalWaysFromEvent[nextTask.second->nextEvent->getId()])
+            {
+                criticalWaysFromEvent[pEvent->getId()].push_back(way);
+                criticalWaysFromEvent[pEvent->getId()].back().push_back(pEvent);
+            }
+        }
     }
+    return criticalWaysFromEvent[start->getId()];
+}
+
+void print_info() {
     cout << "\n \t Список событий " << endl;
     for (auto key_event : events)
     {
         cout << key_event.second << endl;
+    }
+    cout << "\n \t Список работ " << endl;
+    for (auto t : tasks)
+    {
+        cout << t.second << endl;
+    }
+}
+
+void findParamsForEvents(vector<Event*> &sortedEvents)
+{
+    // прямой ход
+    sortedEvents[0]->earlyMoment = 0;
+    for (int i = 1; i < sortedEvents.size(); i++)
+    {
+        for (auto prevTask : sortedEvents[i]->prevTasksOfEvent)
+        {
+            sortedEvents[i]->earlyMoment = max(sortedEvents[i]->earlyMoment,
+                prevTask.second->prevEvent->earlyMoment + prevTask.second->timeOfDuration);
+        }
+    }
+
+    // обратный ход и вычисление резерва
+    sortedEvents[sortedEvents.size() - 1]->lateMoment = sortedEvents[sortedEvents.size() - 1]->earlyMoment;
+    for (int i = sortedEvents.size() - 2; i >= 0; i--)
+    {
+        for (auto nextTask : sortedEvents[i]->nextTasksOfEvent)
+        {
+            sortedEvents[i]->lateMoment = min(sortedEvents[i]->lateMoment,
+                nextTask.second->nextEvent->lateMoment - nextTask.second->timeOfDuration);
+        }
+        sortedEvents[i]->reservedTime = sortedEvents[i]->lateMoment - sortedEvents[i]->earlyMoment;
+    }
+}
+
+void findParamsForTasks(map<int, Task*> &tasks)
+{
+    for (auto itTask : tasks)
+    {
+        itTask.second->fullRezervedTime = itTask.second->nextEvent->lateMoment - itTask.second->prevEvent->earlyMoment
+            - itTask.second->timeOfDuration;
+        itTask.second->independentRezervedTime = itTask.second->nextEvent->earlyMoment - itTask.second->prevEvent->lateMoment
+            - itTask.second->timeOfDuration;
     }
 }
 
@@ -517,43 +587,49 @@ int main()
         }
     }
 
-    print_info();
-
     removeCircles(events, tasks);
 
     Event* start = nullptr, * finish = nullptr;
     Event* virtualStart = nullptr, * virtualFinish = nullptr;
     while(findStartAndFinish(events, start, finish, virtualStart, virtualFinish));
    
-    cout << endl << " Начальное событие: \t" << endl;
-    cout << start << endl;
-    cout << " Конечное событие: \t" << endl;
-    cout << finish << endl;
-    
     vector<Event*> sortedEvents = sortEvents(events, start, finish, virtualStart, virtualFinish);
             
-    // Вывод результата
+    // Вывод частично упорядоченного списка работ
     *foutGraph << events.size() << " \t" << tasks.size() << endl;
     
-
-    cout << endl << " \tЧастично упорядоченный список работ :" << endl;
     for (int i = 0; i < sortedEvents.size(); i++)
     {
         *fout << sortedEvents[i] << endl;
         for (auto it : sortedEvents[i]->nextTasksOfEvent)
         {
-            //*foutGraph << it.second->prevEvent->newNumber << " \t" << it.second->nextEvent->newNumber << " \t" << it.second->time << endl;
-            *foutGraph << it.second->prevEvent->getId() << " \t" << it.second->nextEvent->getId() << " \t" << it.second->time << endl;
-            cout << it.second->prevEvent->getId() << " \t" << it.second->nextEvent->getId() << " \t" << it.second->time << endl;
+            *foutGraph << it.second->prevEvent->getId() << " \t" << it.second->nextEvent->getId() << " \t" << it.second->timeOfDuration << endl;
         }
     }
 
+    findParamsForEvents(sortedEvents);
+    findParamsForTasks(tasks);
+
+    print_info();
+    /*
     cout << endl << " \t Список полных путей " << endl;
     for (auto fullWay : findFullWay(&sortedEvents, start, finish))
     {
         for (int i = fullWay.size() - 1; i >= 0; i--)
         {
             cout << fullWay[i]->getId() << " \t";
+        }
+        cout << endl;
+    }
+    */
+    
+    cout << " Длина критического пути: " << finish->earlyMoment << endl;
+    cout << endl << " \t Список критических путей " << endl;
+    for (auto criticalWay : findCriticalWay(&sortedEvents, start, finish))
+    {
+        for (int i = criticalWay.size() - 1; i >= 0; i--)
+        {
+            cout << criticalWay[i]->getId() << " \t";
         }
         cout << endl;
     }
