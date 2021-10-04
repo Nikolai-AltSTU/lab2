@@ -159,6 +159,7 @@ Task::~Task() {
                 prevEvent->nextTasksOfEvent.clear();
             break;
         }
+        
     }
     
     for (auto key_event : nextEvent->prevTasksOfEvent)
@@ -171,7 +172,9 @@ Task::~Task() {
             break;
         }
     }
+    tasks.erase(id);
 }
+
 
 int message(const string header, Event* eventToService, vector<string> variants)
 {
@@ -240,6 +243,48 @@ int findTask(int index, map<int, Task*> tasks)
         }
     }
     return -1;
+}
+
+void inputTasks(int numberOfEvents, int numberOfTasks, ifstream* fin, map<int, Event*>& events, map<int, Task*>& tasks)
+{
+    for (int i = 0; i < numberOfEvents; i++)
+    {
+        events[i] = new Event(i);
+    }
+
+    for (int i = 0; i < numberOfTasks; i++)
+    {
+        tasks[i] = new Task(i);
+        *fin >> *tasks[i];
+        tasks[i]->nextEvent->prevTasksOfEvent[tasks[i]->prevEventIndex] = tasks[i];
+        tasks[i]->prevEvent->nextTasksOfEvent[tasks[i]->nextEventIndex] = tasks[i];
+
+        int theSameTask = findTask(i, tasks);
+        if (theSameTask >= 0)
+        {
+            int numberOfTaskToRemove = message(" Конфликт!  Найдена дублирующая работа ", { tasks[theSameTask],  tasks[i] });
+            if (numberOfTaskToRemove == 0) {
+                numberOfTaskToRemove = theSameTask;
+            }
+            else
+            {
+                numberOfTaskToRemove = i;
+            }
+            delete tasks[numberOfTaskToRemove];
+            tasks.erase(numberOfTaskToRemove);
+        }
+    }
+
+    // удаление несуществующих событий, добавленных для ввода
+    for (int i = 0; i < numberOfEvents; i++)
+    {
+        if (events[i]->nextTasksOfEvent.empty() && events[i]->prevTasksOfEvent.empty())
+        {
+            delete events[i];
+            events.erase(i);
+        }
+    }
+
 }
 
 map<int, vector<Task*>> ways;
@@ -406,7 +451,6 @@ vector<Event*> sortEvents(map<int, Event*>& events, Event*& start, Event*& finis
         notSortedEvents.insert(virtualFinish);
     }
 
-
     // образовался цикл, поэтому не работает
     while (!notSortedEvents.empty())
     {
@@ -450,6 +494,7 @@ vector<Event*> sortEvents(map<int, Event*>& events, Event*& start, Event*& finis
 map<int, vector<vector<Event*>>> waysFromEvent;
 vector<vector<Event*>> findFullWay(vector<Event*> *sortedEvents, Event* start, Event* finish)
 {
+    waysFromEvent.clear();
     waysFromEvent[finish->getId()].push_back({ finish });
 
     for (int i = sortedEvents->size() - 2; i >= 0; i--)
@@ -468,8 +513,9 @@ vector<vector<Event*>> findFullWay(vector<Event*> *sortedEvents, Event* start, E
 }
 
 map<int, vector<vector<Event*>>> criticalWaysFromEvent;
-vector<vector<Event*>> findCriticalWay(vector<Event*>* sortedEvents, Event* start, Event* finish)
+vector<vector<Event*>> findCriticalWays(vector<Event*>* sortedEvents, Event* start, Event* finish)
 {
+    criticalWaysFromEvent.clear();
     criticalWaysFromEvent[finish->getId()].push_back({ finish });
 
     for (int i = sortedEvents->size() - 2; i >= 0; i--)
@@ -489,16 +535,35 @@ vector<vector<Event*>> findCriticalWay(vector<Event*>* sortedEvents, Event* star
     return criticalWaysFromEvent[start->getId()];
 }
 
-void print_info() {
-    cout << "\n \t Список событий " << endl;
-    for (auto key_event : events)
-    {
-        cout << key_event.second << endl;
-    }
-    cout << "\n \t Список работ " << endl;
+
+void printTasks(vector<Task*>& tasks, ofstream *fout = NULL)
+{
     for (auto t : tasks)
     {
-        cout << t.second << endl;
+        if (fout != NULL)
+            *fout << t << endl;
+        else
+            cout << t << endl;
+    }
+}
+void printTasks(map<int, Task*>& tasks, ofstream* fout = NULL)
+{
+    for (auto t : tasks)
+    {
+        if (fout != NULL)
+            *fout << t.second << endl;
+        else
+            cout << t.second << endl;
+    }
+}
+void printEvents(vector<Event*>& sortedEvents, ofstream* fout = NULL)
+{
+    for (auto t : tasks)
+    {
+        if (fout != NULL)
+            *fout << t.second << endl;
+        else
+            cout << t.second << endl;
     }
 }
 
@@ -539,6 +604,19 @@ void findParamsForTasks(map<int, Task*> &tasks)
     }
 }
 
+vector<Task*> getSortedTasks(const vector<Event*> sortedEvents)
+{
+    vector<Task*> sortedTasks;
+    for (int i = 0; i < sortedEvents.size(); i++)
+    {
+        for (auto it : sortedEvents[i]->nextTasksOfEvent)
+        {
+            sortedTasks.push_back(it.second);
+        }
+    }
+    return sortedTasks;
+}
+
 int main()
 {
     SetConsoleCP(1251);
@@ -549,44 +627,13 @@ int main()
     int numberOfEvents = 0, numberOfTasks = 0;
     *fin >> numberOfEvents >> numberOfTasks;
 
-    for (int i = 0; i < numberOfEvents; i++)
-    {
-        events[i] = new Event(i);
-    }
+    inputTasks(numberOfEvents, numberOfTasks, fin, events, tasks);
+
+    // вывод исходного списка работ
+    cout << " Исходный список работ: " << endl;
+    printTasks(tasks);
+    int lineN = 30; while (cout << '-', lineN--); cout << endl;
     
-    for (int i = 0; i < numberOfTasks; i++)
-    {
-        tasks[i] = new Task(i);
-        *fin >> *tasks[i];
-        tasks[i]->nextEvent->prevTasksOfEvent[tasks[i]->prevEventIndex] = tasks[i];
-        tasks[i]->prevEvent->nextTasksOfEvent[tasks[i]->nextEventIndex] = tasks[i];
-
-        int theSameTask = findTask(i, tasks);
-        if (theSameTask >= 0)
-        {
-            int numberOfTaskToRemove = message(" Конфликт!  Найдена дублирующая работа ", { tasks[theSameTask],  tasks[i] });
-            if (numberOfTaskToRemove == 0) {
-                numberOfTaskToRemove = theSameTask;
-            }
-            else
-            {
-                numberOfTaskToRemove = i;
-            }
-            delete tasks[numberOfTaskToRemove];
-            tasks.erase(numberOfTaskToRemove);
-        }
-    }
-
-    // удаление несуществующих событий
-    for (int i = 0; i < numberOfEvents; i++)
-    {
-        if (events[i]->nextTasksOfEvent.empty() && events[i]->prevTasksOfEvent.empty())
-        {
-            delete events[i];
-            events.erase(i);
-        }
-    }
-
     removeCircles(events, tasks);
 
     Event* start = nullptr, * finish = nullptr;
@@ -595,9 +642,14 @@ int main()
    
     vector<Event*> sortedEvents = sortEvents(events, start, finish, virtualStart, virtualFinish);
             
-    // Вывод частично упорядоченного списка работ
-    *foutGraph << events.size() << " \t" << tasks.size() << endl;
-    
+    vector<Task*> sortedTasks = getSortedTasks(sortedEvents);
+
+    // Печать частично упорядоченного списка работ
+    cout << " Частично упорядоченного списка работ:" << endl;
+    printTasks(sortedTasks);
+
+    // Вывод в файл частично упорядоченного списка работ
+    *foutGraph << sortedEvents.size() << " \t" << sortedTasks.size() << endl;
     for (int i = 0; i < sortedEvents.size(); i++)
     {
         *fout << sortedEvents[i] << endl;
@@ -610,7 +662,7 @@ int main()
     findParamsForEvents(sortedEvents);
     findParamsForTasks(tasks);
 
-    print_info();
+    vector<vector<Event*>> criticalWays = findCriticalWays(&sortedEvents, start, finish);
     /*
     cout << endl << " \t Список полных путей " << endl;
     for (auto fullWay : findFullWay(&sortedEvents, start, finish))
@@ -621,7 +673,6 @@ int main()
         }
         cout << endl;
     }
-    */
     
     cout << " Длина критического пути: " << finish->earlyMoment << endl;
     cout << endl << " \t Список критических путей " << endl;
@@ -633,6 +684,9 @@ int main()
         }
         cout << endl;
     }
+    */
+
+
 
     fin->close(); delete fin;
     fout->close();  delete fout;
