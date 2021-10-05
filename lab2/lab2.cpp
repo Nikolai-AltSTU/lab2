@@ -11,8 +11,8 @@
 #include <set>
 #include <windows.h>
 
-#define V_START INT32_MIN
-#define V_FINISH INT32_MAX
+#define V_START -1 //INT32_MIN
+#define V_FINISH 1000 //INT32_MAX
 using namespace std;
 class Task;
 class Event;
@@ -132,12 +132,12 @@ Task::Task(int id, int prevEventIndex, int nextEventIndex, int timeOfDuration)
     this->timeOfDuration = timeOfDuration;
 }
 ostream& operator<< (ostream& out, const Task* task) {
-    out << "ID работы: " << task->id << "\t ";
-    out << "Предыдущее событие: " << task->prevEventIndex << "\t ";
-    out << "Следующее событие: " << task->nextEventIndex << "\t ";
-    out << "Время: " << task->timeOfDuration << "\t ";
-    out << "Полный резерв: " << task->fullRezervedTime << "\t ";
-    out << "Независимый резерв: " << task->independentRezervedTime << endl;
+    out << "ID работы: " << task->id;
+    out << "\r\t\tПредыдущее событие: " << task->prevEventIndex;
+    out << "\r\t\t\t\t\t\tСледующее событие: " << task->nextEventIndex;
+    out << "\r\t\t\t\t\t\t\t\t\t\t Время: " << task->timeOfDuration << "\t ";
+    out << "\r\t\t\t\t\t\t\t\t\t\t\t\t\tПолный резерв: " << task->fullRezervedTime << "\t ";
+    out << "\r\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tНезависимый резерв: " << task->independentRezervedTime;
     return out;
 }
 istream& operator>> (std::istream& in, Task& task)
@@ -145,8 +145,10 @@ istream& operator>> (std::istream& in, Task& task)
     in >> task.prevEventIndex;
     in >> task.nextEventIndex;
     in >> task.timeOfDuration;
-    task.prevEvent = events[task.prevEventIndex];
-    task.nextEvent = events[task.nextEventIndex];
+    if(events.find(task.prevEventIndex) != events.end())
+        task.prevEvent = events[task.prevEventIndex];
+    if (events.find(task.prevEventIndex) != events.end())
+        task.nextEvent = events[task.nextEventIndex];
     return in;
 }
 Task::~Task() {
@@ -569,8 +571,16 @@ void printEvents(vector<Event*>& sortedEvents, ofstream* fout = NULL)
 
 void findParamsForEvents(vector<Event*> &sortedEvents)
 {
+    for (int i = 0; i < sortedEvents.size(); i++)
+    {
+        sortedEvents[i]->lateMoment = INT32_MAX;
+        sortedEvents[i]->earlyMoment = INT32_MIN;
+        sortedEvents[i]->reservedTime = 0;
+    }
     // прямой ход
     sortedEvents[0]->earlyMoment = 0;
+     
+
     for (int i = 1; i < sortedEvents.size(); i++)
     {
         for (auto prevTask : sortedEvents[i]->prevTasksOfEvent)
@@ -617,6 +627,266 @@ vector<Task*> getSortedTasks(const vector<Event*> sortedEvents)
     return sortedTasks;
 }
 
+vector<string> findGantDiagram(vector<Task*> sortedTasks,const int lengthOfCriticalWay)
+{
+    vector<string> diagram;
+#define WORK_CHAR '\205'
+#define EMPTY_WORK_CHAR '.'
+    const int freespace = 15;
+    const int startOfDraw = 6;
+    // заполняем диаграмму пустотой
+    diagram.resize(sortedTasks.size()+1);
+    for (int i = 0; i <= sortedTasks.size(); i++)
+    {
+        diagram[i].assign(lengthOfCriticalWay + freespace << 1, ' ');
+        // пишем номер работы
+        int k = 0; // позиция символа для номера работы
+        for (char c : to_string(i))
+        {
+            diagram[i][k++] = c;
+        }
+    }
+
+    // заполняем шкалу времени
+    for (int i = 0; i < lengthOfCriticalWay + startOfDraw; i += 5)
+    {
+        int k = i + startOfDraw;
+        diagram[0][k++] = '|';
+        for (char c : to_string(i))
+        {
+            diagram[0][k++] = c;
+        }
+    }
+    diagram[0].insert(lengthOfCriticalWay + startOfDraw + startOfDraw + 3, "Время");
+
+    // отрисовка диаграммы Ганта
+    for (int i = 0; i < sortedTasks.size(); i++)
+    {
+        // пишем номер предыдущего события
+        int start = startOfDraw +  sortedTasks[i]->prevEvent->earlyMoment;
+
+        // запись номера предыдущего события 
+        string prevEvId = to_string(sortedTasks[i]->prevEvent->getId());
+        for (int j = 0, k = prevEvId.size() - 1; k >= 0; k--, j++)
+        {
+            diagram[i+1][start - 1 - j] = prevEvId[k];
+        }
+
+        int t = sortedTasks[i]->timeOfDuration; // время работы
+        // отрисовка работы
+        if (t == 0)
+        {
+            diagram[i+1][start++] = EMPTY_WORK_CHAR;
+        }
+        else
+        {
+            while(t--)
+            {
+                diagram[i+1][start++] = WORK_CHAR;
+            }
+        }
+
+        // запись номера следующего события 
+        string nextEvId = to_string(sortedTasks[i]->nextEvent->getId());
+        for (int k = 0; k < nextEvId.size(); k++)
+        {
+            diagram[i+1][start + k] = nextEvId[k];
+        }
+    }
+
+    return diagram;
+#undef WORK_CHAR
+#undef EMPTY_WORK_CHAR
+}
+
+struct projectData {
+    vector<Event*> sortedEvents;
+    vector<Task*>sortedTasks;
+    vector<vector<Event*>> criticalWays;
+    Event* start = nullptr, * finish = nullptr;
+}
+findProjectData (map<int, Event*>& events, map<int, Task*>& tasks)
+{
+    projectData res;
+    removeCircles(events, tasks);
+    res.start = nullptr, res.finish = nullptr;
+    Event* virtualStart = nullptr, * virtualFinish = nullptr;
+    while (findStartAndFinish(events, res.start, res.finish, virtualStart, virtualFinish));
+
+    res.sortedEvents = sortEvents(events, res.start, res.finish, virtualStart, virtualFinish);
+    res.sortedTasks = getSortedTasks(res.sortedEvents);
+
+    findParamsForEvents(res.sortedEvents);
+    findParamsForTasks(tasks);
+    res.criticalWays = findCriticalWays(&res.sortedEvents, res.start, res.finish);
+    return res;
+}
+
+int printInfoLab4(projectData pData, ofstream* fout = NULL, ofstream* foutGraph = NULL)
+{
+    // Печать частично упорядоченного списка работ
+    {int lineN = 150; while (cout << '-', lineN--); cout << endl; }
+    cout << " Частично упорядоченный спискок работ:" << endl;
+    printTasks(pData.sortedTasks);
+
+    if (foutGraph) {
+        // Вывод в файл частично упорядоченного списка работ для построение графа
+        *foutGraph << pData.sortedEvents.size() << " \t" << pData.sortedTasks.size() << endl;
+        for (auto it : pData.sortedTasks)
+        {
+            *foutGraph << it->prevEvent->getId() << " \t" << it->nextEvent->getId() << " \t" << it->timeOfDuration << endl;
+        }
+    }
+
+    if (fout)
+    {
+        *fout << " Отсортированные события " << endl;
+        for (int i = 0; i < pData.sortedEvents.size(); i++)
+        {
+            *fout << pData.sortedEvents[i] << endl;
+        }
+    }
+
+    /*
+    cout << endl << " \t Список полных путей " << endl;
+    for (auto fullWay : findFullWay(&sortedEvents, start, finish))
+    {
+        for (int i = fullWay.size() - 1; i >= 0; i--)
+        {
+            cout << fullWay[i]->getId() << " \t";
+        }
+        cout << endl;
+    }
+
+    cout << " Длина критического пути: " << finish->earlyMoment << endl;
+    cout << endl << " \t Список критических путей " << endl;
+    for (auto criticalWay : findCriticalWay(&sortedEvents, start, finish))
+    {
+        for (int i = criticalWay.size() - 1; i >= 0; i--)
+        {
+            cout << criticalWay[i]->getId() << " \t";
+        }
+        cout << endl;
+    }
+    */
+    vector<string> diagram = findGantDiagram(pData.sortedTasks, pData.finish->earlyMoment);
+    std::cout << endl << " Диаграмма Ганта \t\t Длина критического пути " << pData.finish->earlyMoment << endl;
+    for (int i = diagram.size() - 1; i >= 0; i--)
+    {
+        cout << diagram[i] << endl;
+    }
+    return 0;
+}
+
+int addTaskDialog(map<int, Event*>& events, map<int, Task*>& tasks)
+{
+    // не забыть посмотреть что происходит в input
+    int n;
+    int newId = 0;
+    while (tasks.find(++newId) != tasks.end());
+
+    Task* newTask = new Task(newId);
+    int a, b, t;
+    do {
+        cout << " Введите начальное событие работы, конечое событие и продолжительность: ";
+        cin >> *newTask;
+    } while (events.find(newTask->prevEventIndex) == events.end() 
+        || events.find(newTask->nextEventIndex) == events.end() 
+        || newTask->timeOfDuration < 0 || newTask->nextEventIndex == newTask->prevEventIndex);
+    
+    tasks[newId] = newTask;
+    tasks[newId]->nextEvent->prevTasksOfEvent[tasks[newId]->prevEventIndex] = tasks[newId];
+    tasks[newId]->prevEvent->nextTasksOfEvent[tasks[newId]->nextEventIndex] = tasks[newId];
+
+    //cout << "Nope" << endl;
+    return 0;
+};
+int editTaskDialog(vector<Task*>& tasks)
+{
+    int n;
+    do {
+        cout << " Введите номер работы из графика Ганта, для изменения времени: ";
+        cin >> n;
+    } while (n < 1 || n > tasks.size());
+    int time;
+    do {
+        cout << " Введите новое время выполения работы: ";
+        cin >> time;
+    } while (time < 0);
+    tasks[n]->timeOfDuration = time;
+    return 0;
+};
+int delTaskDialog(vector<Task*>& sortedTasks, map<int, Task*>& tasks)
+{
+    // не работает в случае появления новой конечной вершины
+    // надо удалять фиктивные вершины и производить работу заново
+    Task* deletedTask;
+    int n, id;
+    do {
+        cout << " Введите номер работы из графика Ганта, для удаления: ";
+        cin >> n;
+    } while (n < 1 && n > tasks.size());
+    deletedTask = sortedTasks[n-1];
+    id = deletedTask->id;
+    tasks.erase(deletedTask->id);
+    delete deletedTask;
+    
+    if (events.find(V_START) != events.end())
+    {
+        delete events[V_START];
+        events.erase(V_START);
+    }
+    if (events.find(V_FINISH) != events.end())
+    {
+        delete events[V_FINISH];
+        events.erase(V_FINISH);
+    }
+    return 0;
+};
+
+int dialogForLab4(map<int, Event*>& events, map<int, Task*>& tasks)
+{
+    projectData pData;
+    char userInput = 0;
+    bool exit = false;
+    do {
+        pData = findProjectData(events, tasks);
+        printInfoLab4(pData);
+
+        cout << " Диалог работы с СГ \n  Добавить работу - 'A', \t Удалить работу - 'D', \t Изменить вес работы - 'S' \t\t Выйти - 'Q' " << endl;
+        do {
+            cin >> userInput;
+        } while (userInput != 'a' && userInput != 'd' && userInput != 's' && userInput != 'q'
+            && userInput != 'A' && userInput != 'D' && userInput != 'S' && userInput != 'Q');
+
+        switch (userInput)
+        {
+        case 'a':
+            addTaskDialog(events, tasks);
+            break;
+        case 's':
+            editTaskDialog(pData.sortedTasks);
+            break;
+        case 'd':
+            delTaskDialog(pData.sortedTasks, tasks);
+            break;
+        case 'A':
+            addTaskDialog(events, tasks);
+            break;
+        case 'S':
+            editTaskDialog(pData.sortedTasks);
+            break;
+        case 'D':
+            delTaskDialog(pData.sortedTasks, tasks);
+            break;
+        default:
+            exit = true;
+            break;
+        }
+    } while (!exit);
+    return 0;
+}
+
 int main()
 {
     SetConsoleCP(1251);
@@ -632,61 +902,12 @@ int main()
     // вывод исходного списка работ
     cout << " Исходный список работ: " << endl;
     printTasks(tasks);
-    int lineN = 30; while (cout << '-', lineN--); cout << endl;
+    {int lineN = 150; while (cout << '-', lineN--); cout << endl; }
     
-    removeCircles(events, tasks);
+    projectData pData = findProjectData(events, tasks);
+    printInfoLab4(pData, fout, foutGraph);
 
-    Event* start = nullptr, * finish = nullptr;
-    Event* virtualStart = nullptr, * virtualFinish = nullptr;
-    while(findStartAndFinish(events, start, finish, virtualStart, virtualFinish));
-   
-    vector<Event*> sortedEvents = sortEvents(events, start, finish, virtualStart, virtualFinish);
-            
-    vector<Task*> sortedTasks = getSortedTasks(sortedEvents);
-
-    // Печать частично упорядоченного списка работ
-    cout << " Частично упорядоченного списка работ:" << endl;
-    printTasks(sortedTasks);
-
-    // Вывод в файл частично упорядоченного списка работ
-    *foutGraph << sortedEvents.size() << " \t" << sortedTasks.size() << endl;
-    for (int i = 0; i < sortedEvents.size(); i++)
-    {
-        *fout << sortedEvents[i] << endl;
-        for (auto it : sortedEvents[i]->nextTasksOfEvent)
-        {
-            *foutGraph << it.second->prevEvent->getId() << " \t" << it.second->nextEvent->getId() << " \t" << it.second->timeOfDuration << endl;
-        }
-    }
-
-    findParamsForEvents(sortedEvents);
-    findParamsForTasks(tasks);
-
-    vector<vector<Event*>> criticalWays = findCriticalWays(&sortedEvents, start, finish);
-    /*
-    cout << endl << " \t Список полных путей " << endl;
-    for (auto fullWay : findFullWay(&sortedEvents, start, finish))
-    {
-        for (int i = fullWay.size() - 1; i >= 0; i--)
-        {
-            cout << fullWay[i]->getId() << " \t";
-        }
-        cout << endl;
-    }
-    
-    cout << " Длина критического пути: " << finish->earlyMoment << endl;
-    cout << endl << " \t Список критических путей " << endl;
-    for (auto criticalWay : findCriticalWay(&sortedEvents, start, finish))
-    {
-        for (int i = criticalWay.size() - 1; i >= 0; i--)
-        {
-            cout << criticalWay[i]->getId() << " \t";
-        }
-        cout << endl;
-    }
-    */
-
-
+    dialogForLab4(events, tasks);
 
     fin->close(); delete fin;
     fout->close();  delete fout;
